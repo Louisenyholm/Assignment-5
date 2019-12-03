@@ -9,6 +9,8 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(pacman)
+p_load(tidyverse)
 ```
 
 # Building on the shoulders of giants: meta-analysis
@@ -24,15 +26,188 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Tips on the process to follow:
 
 - Download the data on all published articles analyzing voice in schizophrenia and the prisma chart as reference of all articles found and reviewed
+```{r}
+data <- readxl::read_xlsx("Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx")
+```
 - Look through the dataset to find out which columns to use, and if there is any additional information written as comments (real world data is always messy!).
     * Hint: PITCH_F0M and PITCH_F0SD group of variables are what you need
     * Hint: Make sure you read the comments in the columns: `pitch_f0_variability`, `frequency`, `Title`,  `ACOUST_ANA_DESCR`, `DESCRIPTION`, and `COMMENTS`
-- Following the procedure in the slides calculate effect size and standard error of the effect size per each study. N.B. we focus on pitch mean and pitch standard deviation.
- . first try using lmer (to connect to what you know of mixed effects models)
- . then use rma() (to get some juicy additional statistics)
+```{r}
+df <- subset(data[,c(1:2, 4, 21, 22, 69, 70, 71, 72, 73, 103, 104:107)])
+```
+- Following the procedure in the slides calculate effect size and variability of the effect size per each study. N.B. we focus on pitch mean and pitch standard deviation.
+```{r}
+p_load(metafor)
 
-- Build a forest plot of the results (forest(model))
+# Calculating effect size
+PitchMeanES <- escalc('SMD',
+             n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC,
+             m1i = PITCH_F0_SZ_M, m2i = PITCH_F0_HC_M,
+             sd1i = PITCH_F0_SZ_SD, sd2i = PITCH_F0_HC_SD,
+             data = df)
+
+PitchSDES <- escalc('SMD',
+                    n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC,
+                    m1i = PITCH_F0SD_SZ_M, m2i = PITCH_F0SD_HC_M,
+                    sd1i = PITCH_F0SD_SZ_SD, sd2i = PITCH_F0SD_HC_SD,
+                    data = df)
+
+``` 
+
+ . first try using lmer (to connect to what you know of mixed effects models)
+
+```{r}
+p_load(lmerTest)
+
+mean_m1 <- lmer(yi ~ 1 + (1|StudyID), PitchMeanES, weights = 1/vi, # The bigger the variance, the smaller the decimal
+                 REML = F,
+                 control = lmerControl(
+                     check.nobs.vs.nlev = "ignore",
+                     check.nobs.vs.nRE = "ignore"))
+summary(mean_m1)
+
+sd_m1 <- lmer(yi ~ 1 + (1|StudyID), PitchSDES, weights = 1/vi, # The bigger the variance, the smaller the decimal
+                 REML = F,
+                 control = lmerControl(
+                     check.nobs.vs.nlev = "ignore",
+                     check.nobs.vs.nRE = "ignore"))
+summary(sd_m1)
+# error: boundary (singular) fit: see ?isSingular
+
+```
+
+ . then use rma() (to get some juicy additional statistics)
  
+```{r}
+mean_m2 <- rma(yi, vi, data = PitchMeanES, slab = StudyID)
+summary(mean_m2)
+
+sd_m2 <- rma(yi, vi, data = PitchSDES, slab = StudyID)
+sd_m2
+```
+ 
+- Build a forest plot of the results (forest(model))
+
+```{r}
+forest(mean_m2)
+
+forest(sd_m2)
+```
+
 - Go back to Assignment 3, add your own study to the data table, and re-run meta-analysis. Do the results change?
+```{r}
+# Loading the pitch data
+pitch_data <- read_csv("pitch_data.csv")
+
+# Creating df for controls
+pitch_data_hc <- filter(pitch_data, Diagnosis == 0)
+
+# Creating df for SCZ
+pitch_data_sz <- filter(pitch_data, Diagnosis == 1)
+
+# Binding the dfs together
+# pitch_data2 <- rbind(pitch_data_hc, pitch_data_sz)
+
+
+# Now we make another column called unique_ID - so we can count how many HCs and SCZs there are
+pitch_data$unique_ID <- paste(pitch_data$Participant, pitch_data$Study, sep = "_")
+pitch_data$unique_ID <- as.factor(pitch_data$unique_ID)
+unique(pitch_data$unique_ID)
+# = 204 in total
+
+pitch_data_hc$unique_ID <- paste(pitch_data_hc$Participant, pitch_data_hc$Study, sep = "_")
+pitch_data_hc$unique_ID <- as.factor(pitch_data_hc$unique_ID)
+unique(pitch_data_hc$unique_ID)
+# HC = 173
+
+204-173
+# 31 are scz
+
+# Make dataframe with the columns we need
+own_study <- data.frame(StudyID = 69, # høhø
+                        SAMPLE_SIZE_HC = 173, 
+                        SAMPLE_SIZE_SZ = 31, 
+                        PITCH_F0_HC_M = mean(pitch_data_hc$Mean), 
+                        PITCH_F0_SZ_M = mean(pitch_data_sz$Mean), 
+                        PITCH_F0_HC_SD = sd(pitch_data_hc$Mean), 
+                        PITCH_F0_SZ_SD = sd(pitch_data_sz$Mean))
+
+own_study_2 <- data.frame(StudyID = 69,
+                        SAMPLE_SIZE_HC = 173, 
+                        SAMPLE_SIZE_SZ = 31, 
+                        PITCH_F0SD_HC_M = mean(pitch_data_hc$SD), 
+                        PITCH_F0SD_SZ_M = mean(pitch_data_sz$SD), 
+                        PITCH_F0SD_HC_SD = sd(pitch_data_hc$SD), 
+                        PITCH_F0SD_SZ_SD = sd(pitch_data_sz$SD))
+
+# Now we want to bind our own study together with the rest of the studies
+
+# Selecting only the relevant variables (the ones used in escalc earlier)
+PitchMeanES_select <- select(PitchMeanES, StudyID, SAMPLE_SIZE_HC, SAMPLE_SIZE_SZ, PITCH_F0_HC_M, PITCH_F0_SZ_M, PITCH_F0_HC_SD, PITCH_F0_HC_SD, PITCH_F0_SZ_SD)
+
+PitchSDES_select <- select(PitchSDES, StudyID, SAMPLE_SIZE_HC, SAMPLE_SIZE_SZ, PITCH_F0SD_HC_M, PITCH_F0SD_SZ_M, PITCH_F0SD_HC_SD, PITCH_F0SD_SZ_SD)
+
+# Binding the dataset with our study
+PitchMeanES_all <- dplyr::bind_rows(PitchMeanES_select, own_study)
+PitchSDES_all <- dplyr::bind_rows(PitchSDES_select, own_study_2)
+PitchMeanES_all$StudyID<-as.factor(PitchMeanES_all$StudyID)
+PitchSDES_all$StudyID <-as.factor(PitchSDES_all$StudyID)
+
+# Calculting effect effect size for pitch mean and pitch variability for each study (pretty much a duplicate of first escalc except new data)
+
+# First the mean stuff
+PitchMeanES_calc <- escalc("SMD",
+                           n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC,
+                           m1i = PITCH_F0_SZ_M, m2i = PITCH_F0_HC_M,
+                           sd1i = PITCH_F0_SZ_SD, sd2i = PITCH_F0_HC_SD,
+                           data = PitchMeanES_all)
+
+# Then the SD stuff
+PitchSDES_calc <- escalc("SMD",
+                         n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC,
+                         m1i = PITCH_F0SD_SZ_M, m2i = PITCH_F0SD_HC_M,
+                         sd1i = PITCH_F0SD_SZ_SD, sd2i = PITCH_F0SD_HC_SD,
+                         data = PitchSDES_all)
+
+# Running models
+all_mean_m1 <- lmer(yi ~ 1 + (1|StudyID), PitchMeanES_calc, weights = 1/vi, # The bigger the variance, the smaller the decimal
+                 REML = F,
+                 control = lmerControl(
+                     check.nobs.vs.nlev = "ignore",
+                     check.nobs.vs.nRE = "ignore"))
+summary(all_mean_m1)
+
+all_sd_m1 <- lmer(yi ~ 1 + (1|StudyID), PitchSDES_calc, weights = 1/vi, # The bigger the variance, the smaller the decimal
+                 REML = F,
+                 control = lmerControl(
+                     check.nobs.vs.nlev = "ignore",
+                     check.nobs.vs.nRE = "ignore"))
+summary(all_sd_m1)
+# error: boundary (singular) fit: see ?isSingular
+
+## SO!!  does the effect size change by including our study?
+# Now rma models
+
+# Mean
+all_mean_m2 <- rma(yi, vi, data = PitchMeanES_calc, slab = StudyID)
+summary(all_mean_m2)
+forest(all_mean_m2)
+
+# The influence stuff from Riccardo:
+inf_mean <- influence(all_mean_m2)
+print(inf)
+plot(inf)
+
+# SD
+all_sd_m2 <- rma(yi, vi, data = PitchSDES_calc, slab = StudyID)
+summary(all_sd_m2)
+forest(all_sd_m2)
+
+# Influence stuff:
+inf_sd <- influence(all_sd_m2)
+print(inf_sd)
+plot(inf_sd)
+```
+
 
 - Now look at the output of rma() and check tau and I2
